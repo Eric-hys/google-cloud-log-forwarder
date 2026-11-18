@@ -35,18 +35,19 @@ Cloud Logging sink -> Pub/Sub topic -> authenticated push (OIDC) -> Cloud Run (t
 
 ## Configure
 
-`env.yaml` holds placeholders only. The workspace token goes to Secret Manager:
+The service accepts only a TrueWatch **Client Token** (create one under Management → Client Token).
+A Client Token can write logs and RUM but cannot query or write other data types, so a leaked token
+cannot read the workspace. A workspace `tkn_` token is refused at start. The service adds the
+`to_headless=true` parameter a Client Token requires.
+
+`env.yaml` holds placeholders only. The Client Token goes to Secret Manager:
 
 ```bash
-printf '%s' 'tkn_xxx' | gcloud secrets create truewatch-dataway-token --data-file=- --project PROJECT_ID
+printf '%s' 'CLIENT_TOKEN' | gcloud secrets create truewatch-dataway-token --data-file=- --project PROJECT_ID
 gcloud secrets add-iam-policy-binding truewatch-dataway-token --project PROJECT_ID \
   --member serviceAccount:forwarder-run@PROJECT_ID.iam.gserviceaccount.com \
   --role roles/secretmanager.secretAccessor
 ```
-
-The secret can hold either the workspace `tkn_` token or a Client Token. A Client Token can only
-write logs and RUM (it cannot query or write other data types), so it is the smaller credential; set
-`DATAWAY_TOKEN_TYPE: "client"` and the service adds the `to_headless=true` parameter it requires.
 
 `DATAWAY_URL` must be `https://` with a DNS name and no query string. The token is sent only as the
 `token` query parameter and never logged. Any other credential-shaped environment variable still
@@ -95,7 +96,7 @@ with its own parser. They prove this service's behaviour, not delivery to TrueWa
 
 ## Security and license
 
-- The token lives in Secret Manager and reaches the service only as `DATAWAY_TOKEN` through
+- The Client Token lives in Secret Manager and reaches the service only as `DATAWAY_TOKEN` through
   `--set-secrets`. Never put it in `env.yaml`, a plain environment variable or this repository.
 - Grant `roles/secretmanager.secretAccessor` on that one secret to the Cloud Run service account
   only. If the token may have leaked, rotate it in TrueWatch and add a new secret version.

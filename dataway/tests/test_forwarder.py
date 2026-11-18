@@ -32,7 +32,7 @@ import main as fwd  # noqa: E402
 
 PROJECT = "example-project"
 SUBSCRIPTION = "projects/example-project/subscriptions/truewatch-logs-push"
-TOKEN = "tkn_0123456789abcdef0123456789abcdef"
+TOKEN = "ct_AbCdEf0123456789abcdef0123456789"   # fake Client Token
 BASE_ENV = {"DATAWAY_URL": "https://eu1-openway.truewatch.com", "DATAWAY_TOKEN": TOKEN,
             "EXPECTED_PROJECT_ID": PROJECT, "EXPECTED_SUBSCRIPTION": SUBSCRIPTION}
 
@@ -220,7 +220,7 @@ class TestSuccess(HandlerCase):
         self.assertEqual(rec["fields"]["status"], "info")
         w = Stub.received[0]
         self.assertEqual(w["path"], "/v1/write/logging")
-        self.assertEqual(w["query"], {"token": [TOKEN]})
+        self.assertEqual(w["query"], {"token": [TOKEN], "to_headless": ["true"]})
         self.assertTrue(w["ctype"].startswith("text/plain"))
         self.assertEqual(w["ua"], fwd.VERSION)
 
@@ -363,7 +363,7 @@ class TestDestinationFailures(HandlerCase):
             self.assertEqual(self.post(push(logentry())), 502)
             time.sleep(0.1)
         self.assertNotIn(TOKEN, buf.getvalue())
-        self.assertNotIn(TOKEN[4:], buf.getvalue())
+        self.assertNotIn(TOKEN[3:], buf.getvalue())
 
 
 # ===================================================================== batching
@@ -509,7 +509,7 @@ class TestConfig(unittest.TestCase):
                 self.fail(DATAWAY_URL=bad)
 
     def test_45_bad_token_refused(self):
-        for bad in ("abc", "tkn_", "tkn_has space", "Bearer tkn_0123456789"):
+        for bad in ("abc", "short_token", "has space 0123456789", "Bearer 0123456789abcdef"):
             with self.subTest(token=bad):
                 self.fail(DATAWAY_TOKEN=bad)
 
@@ -532,16 +532,13 @@ class TestConfig(unittest.TestCase):
             with self.subTest(name=name):
                 self.fail(**{name: bad})
 
-    def test_50_client_token_mode(self):
-        cfg = self.ok(DATAWAY_TOKEN_TYPE="client", DATAWAY_TOKEN="ct_AbCdEf0123456789xyz")
-        self.assertEqual(cfg["token_type"], "client")
-        self.assertIn("to_headless=true", fwd.Sender(cfg).target)
-        self.assertNotIn("to_headless", fwd.Sender(self.ok()).target)
-        for bad in ({"DATAWAY_TOKEN_TYPE": "client", "DATAWAY_TOKEN": "short"},
-                    {"DATAWAY_TOKEN_TYPE": "client", "DATAWAY_TOKEN": "has space 0123456789"},
-                    {"DATAWAY_TOKEN_TYPE": "admin"}):
-            with self.subTest(env=bad):
-                self.fail(**bad)
+    def test_50_client_token_only(self):
+        self.assertIn("to_headless=true", fwd.Sender(self.ok()).target)
+        # A workspace token is refused even though it would match the Client Token shape.
+        self.fail(DATAWAY_TOKEN="tkn_0123456789abcdef0123456789abcdef")
+        for value in ("client", "workspace"):
+            with self.subTest(token_type=value):
+                self.fail(DATAWAY_TOKEN_TYPE=value)
 
     def test_49_subscription_must_be_a_full_name(self):
         self.fail(EXPECTED_SUBSCRIPTION="truewatch-logs-push")

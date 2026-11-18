@@ -46,9 +46,9 @@ Line-protocol differences from the v02 DataKit JSON records:
   - "\\" inside a tag value is written as "%5C"
   - CR and LF inside a string field are written as the two characters "\\r" / "\\n"
 
-Credential: DATAWAY_TOKEN, either the workspace tkn_... token (DATAWAY_TOKEN_TYPE=workspace, the
-default) or a Client Token (DATAWAY_TOKEN_TYPE=client, sent with to_headless=true; a Client Token can
-write logs and RUM but cannot query or write other data types). Give it to Cloud Run from Secret Manager
+Credential: DATAWAY_TOKEN must be a TrueWatch Client Token, sent with to_headless=true. A Client Token
+can write logs and RUM but cannot query or write other data types, so a leaked token cannot read the
+workspace. A workspace tkn_ token is refused at start. Give it to Cloud Run from Secret Manager
 (--set-secrets DATAWAY_TOKEN=<secret>:latest), never in env.yaml. It is sent only as the token query
 parameter of the DataWay URL and never appears in a receipt, error or start line.
 """
@@ -102,7 +102,6 @@ INSERT_ID_RE = re.compile(r"^[\x21-\x7e]{1,256}$")
 RESOURCE_TYPE_RE = re.compile(r"^[a-z][a-z0-9_.\-]{0,62}$")
 RFC3339_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:([Zz])|([+-])(\d{2}):(\d{2}))$")
 HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
-TOKEN_RE = re.compile(r"^tkn_[A-Za-z0-9]{8,128}$")          # workspace token
 CLIENT_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{16,128}$")    # Client Token (sent with to_headless=true)
 EXTRA_TAG_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 EXTRA_TAG_VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@+\-]{1,256}$")
@@ -132,7 +131,7 @@ SEVERITY_STATUS = {"DEFAULT": "info", "DEBUG": "debug", "INFO": "info", "NOTICE"
 # The DataWay token is the only credential this service may hold, and only under its own name.
 # Any other credential-shaped variable still refuses start, so a stray secret is noticed.
 FORBIDDEN_ENV_SUBSTRINGS = ("DATAWAY", "SECRET", "TOKEN", "CREDENTIAL", "PASSWORD")
-ALLOWED_ENV_EXCEPTIONS = ("DATAWAY_URL", "DATAWAY_TOKEN", "DATAWAY_TOKEN_TYPE", "DATAWAY_GZIP")
+ALLOWED_ENV_EXCEPTIONS = ("DATAWAY_URL", "DATAWAY_TOKEN", "DATAWAY_GZIP")
 
 
 class Reject(Exception):
@@ -212,6 +211,8 @@ def _int_env(env, name):
 
 def cfg_from_env(env=None):
     env = os.environ if env is None else env
+    if "DATAWAY_TOKEN_TYPE" in env:
+        raise ConfigFail("DATAWAY_TOKEN_TYPE is not supported: only a Client Token is accepted")
     offending = sorted(k for k in env
                        if k not in ALLOWED_ENV_EXCEPTIONS
                        and any(s in k.upper() for s in FORBIDDEN_ENV_SUBSTRINGS))
@@ -230,16 +231,11 @@ def cfg_from_env(env=None):
     if not MEASUREMENT_RE.match(measurement):
         raise ConfigFail("MEASUREMENT must match [A-Za-z][A-Za-z0-9_]{0,63}")
 
-    token_type = (env.get("DATAWAY_TOKEN_TYPE") or "workspace").lower()
     token = env.get("DATAWAY_TOKEN", "")
-    if token_type == "workspace":
-        if not TOKEN_RE.match(token or ""):
-            raise ConfigFail("DATAWAY_TOKEN missing or not a tkn_ workspace token")
-    elif token_type == "client":
-        if not CLIENT_TOKEN_RE.match(token or ""):
-            raise ConfigFail("DATAWAY_TOKEN missing or not a Client Token")
-    else:
-        raise ConfigFail("DATAWAY_TOKEN_TYPE must be workspace or client")
+    if token.startswith("tkn_"):
+        raise ConfigFail("DATAWAY_TOKEN is a workspace token; only a Client Token is accepted")
+    if not CLIENT_TOKEN_RE.match(token):
+        raise ConfigFail("DATAWAY_TOKEN missing or not a Client Token")
 
     gz = (env.get("DATAWAY_GZIP") or "false").lower()
     if gz not in ("true", "false"):
@@ -248,7 +244,7 @@ def cfg_from_env(env=None):
     host, port, path = validate_destination(env.get("DATAWAY_URL"))
     cfg = {"project": project, "subscription": sub, "measurement": measurement,
            "dest_scheme": "https", "dest_host": host, "dest_port": port, "dest_path": path,
-           "token": token, "token_type": token_type, "gzip": gz == "true", "extra_tags": parse_extra_tags(env.get("EXTRA_TAGS"))}
+           "token": token, "gzip": gz == "true", "extra_tags": parse_extra_tags(env.get("EXTRA_TAGS"))}
     for name in BATCH_DEFAULTS:
         cfg[name.lower()] = _int_env(env, name)
     return cfg
@@ -498,10 +494,8 @@ class Sender:
     def __init__(self, cfg, connect=_connection):
         self.cfg, self.connect = cfg, connect
         self.conn, self.last_used = None, 0.0
-        query = {"token": cfg["token"]}
-        if cfg.get("token_type") == "client":
-            query["to_headless"] = "true"       # a Client Token is refused (403 kodo.tokenScopeMismatch) without it
-        self.target = "%s?%s" % (cfg["dest_path"], urllib.parse.urlencode(query))
+        # A Client Token is refused (403 kodo.tokenScopeMismatch) without to_headless=true.
+        self.target = "%s?%s" % (cfg["dest_path"], urllib.parse.urlencode({"token": cfg["token"], "to_headless": "true"}))
 
     def _close(self):
         if self.conn is not None:

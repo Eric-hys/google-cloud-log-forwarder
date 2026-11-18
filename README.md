@@ -23,8 +23,8 @@ Cloud Logging sink -> Pub/Sub topic -> authenticated push (OIDC) -> Cloud Run (t
 ## DataWay edition
 
 [`dataway/`](dataway/) holds a variant that sends straight to TrueWatch DataWay over HTTPS, with no
-DataKit. It batches concurrent Pub/Sub pushes into one write and reads a workspace token or a Client
-Token from Secret Manager. See [dataway/README.md](dataway/README.md).
+DataKit. It batches concurrent Pub/Sub pushes into one write and reads a Client Token (write-only,
+logs and RUM) from Secret Manager. See [dataway/README.md](dataway/README.md).
 
 ## Get the code
 
