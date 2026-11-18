@@ -43,6 +43,7 @@ cannot read the workspace. A workspace `tkn_` token is refused at start. The ser
 `env.yaml` holds placeholders only. The Client Token goes to Secret Manager:
 
 ```bash
+gcloud services enable secretmanager.googleapis.com --project PROJECT_ID
 printf '%s' 'CLIENT_TOKEN' | gcloud secrets create truewatch-dataway-token --data-file=- --project PROJECT_ID
 gcloud secrets add-iam-policy-binding truewatch-dataway-token --project PROJECT_ID \
   --member serviceAccount:forwarder-run@PROJECT_ID.iam.gserviceaccount.com \
